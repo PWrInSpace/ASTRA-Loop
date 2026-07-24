@@ -11,6 +11,7 @@ CoastSolver = Literal["euler", "rk4"]
 class ModelParams:
     reference_pressure: float = 101325.0
     reference_air_density: float = 1.225
+    reference_temperature: float = 288.15
     scale_height: float = 44330.0
     baro_exponent: float = 0.1903
     density_exponent: float = 4.256
@@ -18,6 +19,7 @@ class ModelParams:
     default_cross_section: float = 0.01
     default_mass: float = 15.0
     default_drag_coefficient: float = 0.45
+    temperature_gradient: float = -0.0065
 
 
 def calculate_altitude(pressure: float, params: ModelParams) -> float:
@@ -35,6 +37,11 @@ def calculate_air_density(altitude: float, params: ModelParams) -> float:
     return params.reference_air_density * (factor**params.density_exponent)
 
 
+def calculate_temperature(altitude: float, params: ModelParams) -> float:
+    altitude = max(altitude, 0.0)
+    return params.reference_temperature + params.temperature_gradient * altitude
+
+
 def calculate_speed(diff_pressure: float, altitude: float, params: ModelParams) -> float:
     if diff_pressure <= 0.0:
         return 0.0
@@ -42,6 +49,18 @@ def calculate_speed(diff_pressure: float, altitude: float, params: ModelParams) 
     if rho <= 0.0:
         return 0.0
     return math.sqrt(2.0 * diff_pressure / rho)
+
+
+def calculate_mach(speed: float, altitude: float, params: ModelParams) -> float:
+    temp = calculate_temperature(altitude, params)
+    local_sound_speed = 20.05 * math.sqrt(temp)
+    return speed / local_sound_speed
+
+def calculate_drag_coefficient(speed: float, altitude: float, params: ModelParams) -> float:
+    mach = calculate_mach(speed, altitude, params)
+    if mach <= 0.0:
+        return 0.0
+    return params.default_drag_coefficient/math.sqrt(1.0 - mach**2)
 
 
 def _coast_derivatives(
@@ -52,12 +71,13 @@ def _coast_derivatives(
 ) -> tuple[float, float, float]:
     """Return (dz/dt, dvz/dt, d(v_lat_sq)/dt) for coast phase with quadratic drag."""
     speed = math.sqrt(max(v_lat_sq, 0.0) + vz * vz)
+    drag_coefficient = calculate_drag_coefficient(speed, z, params)
     rho = calculate_air_density(z, params)
     k = (
         -0.5
         / params.default_mass
         * rho
-        * params.default_drag_coefficient
+        * drag_coefficient
         * params.default_cross_section
         * speed
     )
